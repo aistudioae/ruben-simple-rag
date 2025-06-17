@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: simple-rag
+    runtime: python3
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run simpleRAG.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: SUPABASE_URL
+        value: https://epdxubvhtbfauanxqdih.supabase.co
+      - key: SUPABASE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwZHh1YnZodGJmYXVhbnhxZGloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDU3NTU0MjcsImV4cCI6MjA2MTMzMTQyN30.uRAsu7GHfJOYf-oIMU7XodWtei7WWH1F0wokOkpiMEM
+      - key: OPENAI_API_KEY
+        value: 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
+      - key: PYTHONUNBUFFERED
+        value: "1" 

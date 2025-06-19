@@ -1,15 +1,32 @@
 services:
+  # Supabase RAG Service
   - type: web
-    name: simple-rag
+    name: simple-rag-supabase
     runtime: python3
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run simpleRAG.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
       - key: SUPABASE_URL
-        value: https://epdxubvhtbfauanxqdih.supabase.co
+        sync: false  # Set in Render dashboard
       - key: SUPABASE_KEY
-        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwZHh1YnZodGJmYXVhbnhxZGloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDU3NTU0MjcsImV4cCI6MjA2MTMzMTQyN30.uRAsu7GHfJOYf-oIMU7XodWtei7WWH1F0wokOkpiMEM
+        sync: false  # Set in Render dashboard
       - key: OPENAI_API_KEY
-        value: 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
+        sync: false  # Set in Render dashboard
       - key: PYTHONUNBUFFERED
-        value: "1" 
+        value: "1"
+  
+  # Pinecone RAG Service (uncomment to deploy)
+  # - type: web
+  #   name: simple-rag-pinecone
+  #   runtime: python3
+  #   buildCommand: pip install -r requirements_pinecone.txt
+  #   startCommand: streamlit run pinecone_rag.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+  #   envVars:
+  #     - key: PINECONE_API_KEY
+  #       sync: false  # Set in Render dashboard
+  #     - key: PINECONE_INDEX_NAME
+  #       sync: false  # Set in Render dashboard
+  #     - key: OPENAI_API_KEY
+  #       sync: false  # Set in Render dashboard
+  #     - key: PYTHONUNBUFFERED
+  #       value: "1" 

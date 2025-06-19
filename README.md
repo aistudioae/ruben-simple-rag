@@ -189,9 +189,20 @@ Set logging level to DEBUG in the script for more detailed output.
 
 This project is open source and available under the MIT License.
 
+## 🚀 Deployment
+
+See [DEPLOY_RENDER.md](DEPLOY_RENDER.md) for detailed instructions on deploying to Render.
+
+Quick start:
+1. Fork this repository
+2. Create a new Blueprint on Render
+3. Add your API keys as environment variables
+4. Deploy!
+
 ## 🙏 Acknowledgments
 
 - OpenAI for the powerful language models
 - Supabase for the excellent vector database
+- Pinecone for the specialized vector search
 - LangChain for document processing tools
 - Streamlit for the amazing web app framework 

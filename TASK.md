@@ -4,6 +4,12 @@
 - [ ] Deploy RAG application to Render platform
 - [ ] Test vector similarity search functionality in production
 - [ ] Debug search issues if they persist after deployment
+- [ ] Create Pinecone-based RAG implementation (2025-01-25)
+  - Design simple architecture for Pinecone RAG
+  - Implement document upload and embedding
+  - Store embeddings in Pinecone
+  - Implement search via Pinecone
+  - Create simple UI or CLI interface
 
 ## Completed Tasks ✅
 - [x] Analyze existing RAG application code (2024-01-25)

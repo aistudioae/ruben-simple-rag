@@ -1,12 +1,14 @@
 # SimpleRAG - Retrieval-Augmented Generation Application
 
-A powerful RAG application built with Streamlit, OpenAI, and Supabase that allows you to upload documents and ask questions about them using AI-powered search.
+A powerful RAG application built with Streamlit and OpenAI that allows you to upload documents and ask questions about them using AI-powered search. Includes implementations for multiple vector databases.
 
 ## 🚀 Features
 
 - **Multi-format Support**: Upload PDF, TXT, and DOCX files
 - **Smart Chunking**: Intelligent document splitting for optimal retrieval
-- **Vector Search**: Powered by Supabase with pgvector for fast similarity search
+- **Multiple Vector Database Options**:
+  - **Supabase** with pgvector (`simpleRAG.py`)
+  - **Pinecone** serverless vector database (`pinecone_rag.py`)
 - **AI Chat Interface**: Natural language Q&A with context-aware responses
 - **Real-time Processing**: Live document processing with progress indicators
 - **Source Citations**: See which document chunks were used for each answer
@@ -22,8 +24,9 @@ A powerful RAG application built with Streamlit, OpenAI, and Supabase that allow
 ## 📋 Prerequisites
 
 - Python 3.9 or higher
-- Supabase account and project
 - OpenAI API key
+- **For Supabase version**: Supabase account and project
+- **For Pinecone version**: Pinecone account (free tier available)
 
 ## 🔧 Installation
 
@@ -40,15 +43,30 @@ A powerful RAG application built with Streamlit, OpenAI, and Supabase that allow
    ```
 
 3. **Install dependencies**:
+   
+   For Supabase version:
    ```bash
    pip install -r requirements.txt
    ```
+   
+   For Pinecone version:
+   ```bash
+   pip install -r requirements_pinecone.txt
+   ```
 
-4. **Set up environment variables** (optional - defaults are provided):
+4. **Set up environment variables**:
+   
+   For Supabase version:
    ```bash
    export SUPABASE_URL="your-supabase-url"
    export SUPABASE_KEY="your-supabase-anon-key"
    export OPENAI_API_KEY="your-openai-api-key"
+   ```
+   
+   For Pinecone version:
+   ```bash
+   cp env.pinecone.template .env.pinecone
+   # Edit .env.pinecone with your API keys
    ```
 
 ## 🚀 Usage

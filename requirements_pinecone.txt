@@ -1,0 +1,15 @@
+# Core dependencies
+pinecone>=3.0.0
+openai>=1.52.0
+streamlit>=1.31.0
+python-dotenv>=1.0.0
+
+# Document processing
+langchain>=0.3.0
+langchain-community>=0.3.0
+pypdf>=4.0.0
+python-docx>=1.1.0
+docx2txt>=0.8
+
+# Optional: For better performance with Pinecone
+# pinecone[grpc]>=3.0.0 

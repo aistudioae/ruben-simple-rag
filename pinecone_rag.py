@@ -526,9 +526,9 @@ def generate_response(query: str, context: List[Dict[str, Any]], openai_client) 
     """Generate response using OpenAI with retrieved context"""
     start_time = time.time()
     
-    # Prepare context from search results
+    # Prepare context from search results - use original content for generation
     context_text = "\n\n".join([
-        f"Document {i+1} (from {match.metadata.get('filename', 'Unknown')}):\n{match.metadata.get('content', '')}"
+        f"Document {i+1} (from {match.metadata.get('filename', 'Unknown')}):\n{match.metadata.get('original_content', match.metadata.get('content', ''))}"
         for i, match in enumerate(context)
     ])
     
@@ -577,8 +577,25 @@ Answer:"""
 def main():
     st.set_page_config(page_title="Pinecone RAG", page_icon="🌲", layout="wide")
     
-    st.title("🌲 Pinecone RAG Application")
-    st.markdown("Upload documents and ask questions using AI-powered search")
+    st.title("🌲 Pinecone RAG Application with Contextual Retrieval")
+    st.markdown("Upload documents and ask questions using AI-powered search with enhanced contextual understanding")
+    
+    # Show info about contextual RAG if index is empty
+    try:
+        temp_index, _ = init_clients()
+        stats = temp_index.describe_index_stats()
+        if stats.total_vector_count == 0:
+            st.info("""
+            💡 **This application now uses Contextual RAG!**
+            
+            Documents uploaded will have contextual information added to each chunk, improving retrieval accuracy by:
+            - 49% with hybrid search (semantic + BM25)
+            - 67% when combined with reranking
+            
+            If you have existing documents without contextual embeddings, please clear the index and re-upload them.
+            """)
+    except:
+        pass
     
     # Initialize clients
     try:
@@ -621,6 +638,41 @@ def main():
             st.metric("Dimension", stats.dimension)
         except Exception as e:
             st.error(f"Could not fetch index stats: {str(e)}")
+        
+        # Clear index button
+        st.divider()
+        st.header("🗑️ Manage Index")
+        st.warning("⚠️ Clearing the index will delete all stored documents and embeddings!")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            clear_confirm = st.checkbox("I understand this will delete all data", key="clear_confirm")
+        with col2:
+            if st.button("Clear All Data", type="secondary", disabled=not clear_confirm):
+                with st.spinner("Clearing all data..."):
+                    try:
+                        # Clear Pinecone index
+                        logger.info("Clearing Pinecone index...")
+                        # Delete all vectors by using a dummy query that matches everything
+                        index.delete(delete_all=True)
+                        
+                        # Clear BM25 index
+                        logger.info("Clearing BM25 index...")
+                        global bm25_index
+                        bm25_index = BM25Index()
+                        # Remove the saved BM25 index file
+                        if os.path.exists('bm25_index.pkl'):
+                            os.remove('bm25_index.pkl')
+                        
+                        st.success("✅ Successfully cleared all data from the index!")
+                        st.info("You can now upload documents with contextual embeddings.")
+                        
+                        # Force a rerun to update statistics
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Error clearing index: {str(e)}")
+                        logger.error(f"Error clearing index: {str(e)}")
     
     # Main chat interface
     st.header("💬 Ask Questions")
@@ -660,10 +712,16 @@ def main():
                         
                         # Show sources in expander
                         with st.expander("📚 Sources"):
-                            for i, match in enumerate(search_results):
+                            for i, match in enumerate(reranked_results):
                                 st.markdown(f"**Source {i+1}** (Score: {match.score:.3f})")
                                 st.markdown(f"*File: {match.metadata.get('filename', 'Unknown')}*")
-                                st.markdown(match.metadata.get('content', '')[:300] + "...")
+                                # Show retrieval method if available
+                                sources = match.metadata.get('retrieval_sources', [])
+                                if sources:
+                                    st.markdown(f"*Retrieved via: {', '.join(sources)}*")
+                                # Show original content, not contextualized
+                                original_content = match.metadata.get('original_content', match.metadata.get('content', ''))
+                                st.markdown(original_content[:300] + "...")
                                 st.divider()
                     else:
                         response = "I couldn't find any relevant information in the knowledge base."

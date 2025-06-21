@@ -75,4 +75,7 @@ tmp/
 # Other
 .cache/
 node_modules/
-*.bak 
+*.bak
+
+# BM25 index
+bm25_index.pkl 

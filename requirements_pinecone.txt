@@ -11,5 +11,9 @@ pypdf>=4.0.0
 python-docx>=1.1.0
 docx2txt>=0.8
 
+# Contextual RAG dependencies
+rank-bm25>=0.2.2
+nltk>=3.8
+
 # Optional: For better performance with Pinecone
 # pinecone[grpc]>=3.0.0 

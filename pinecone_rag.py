@@ -16,6 +16,17 @@ import uuid
 import logging
 import time
 from datetime import datetime
+from rank_bm25 import BM25Okapi
+import nltk
+from nltk.tokenize import word_tokenize
+import json
+import pickle
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -28,6 +39,73 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 # Force load .env.pinecone, overriding any existing .env file
 load_dotenv('.env.pinecone', override=True)
+
+# BM25 Index class for lexical search
+class BM25Index:
+    def __init__(self):
+        self.documents = []
+        self.bm25 = None
+        self.metadata = []
+        self.chunk_ids = []
+        
+    def add_documents(self, chunks, chunk_ids):
+        """Add documents to BM25 index"""
+        for chunk, chunk_id in zip(chunks, chunk_ids):
+            # Tokenize for BM25
+            tokens = word_tokenize(chunk.page_content.lower())
+            self.documents.append(tokens)
+            self.metadata.append(chunk.metadata)
+            self.chunk_ids.append(chunk_id)
+        
+        # Create BM25 index
+        self.bm25 = BM25Okapi(self.documents)
+    
+    def search(self, query: str, top_k: int = 5):
+        """Search using BM25"""
+        if not self.bm25:
+            return []
+            
+        query_tokens = word_tokenize(query.lower())
+        scores = self.bm25.get_scores(query_tokens)
+        
+        # Get top-k indices
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        
+        results = []
+        for idx in top_indices:
+            if scores[idx] > 0:  # Only include results with positive scores
+                results.append({
+                    'score': scores[idx],
+                    'metadata': self.metadata[idx],
+                    'chunk_id': self.chunk_ids[idx]
+                })
+        
+        return results
+    
+    def save(self, filepath: str):
+        """Save BM25 index to file"""
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+                'documents': self.documents,
+                'metadata': self.metadata,
+                'chunk_ids': self.chunk_ids
+            }, f)
+    
+    def load(self, filepath: str):
+        """Load BM25 index from file"""
+        if os.path.exists(filepath):
+            with open(filepath, 'rb') as f:
+                data = pickle.load(f)
+                self.documents = data['documents']
+                self.metadata = data['metadata']
+                self.chunk_ids = data['chunk_ids']
+                self.bm25 = BM25Okapi(self.documents)
+                return True
+        return False
+
+# Global BM25 index
+bm25_index = BM25Index()
+bm25_index.load('bm25_index.pkl')  # Try to load existing index
 
 # Initialize clients
 @st.cache_resource
@@ -63,6 +141,68 @@ def init_clients():
     openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
     
     return index, openai_client
+
+def generate_chunk_context(document_text: str, chunk_text: str, chunk_index: int, total_chunks: int, openai_client) -> str:
+    """Generate contextual description for a chunk within the document"""
+    # Limit document text to avoid token limits
+    max_doc_length = 4000
+    if len(document_text) > max_doc_length:
+        # Take beginning and end of document for context
+        doc_preview = document_text[:max_doc_length//2] + "\n...\n" + document_text[-max_doc_length//2:]
+    else:
+        doc_preview = document_text
+    
+    prompt = f"""<document>
+{doc_preview}
+</document>
+
+Here is chunk {chunk_index + 1} of {total_chunks} that we want to situate within the whole document:
+<chunk>
+{chunk_text}
+</chunk>
+
+Please give a short succinct context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Include relevant document title, section, or topic information. Answer only with the succinct context and nothing else."""
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=100
+        )
+        
+        context = response.choices[0].message.content.strip()
+        logger.info(f"Generated context for chunk {chunk_index + 1}: {context[:50]}...")
+        return context
+    except Exception as e:
+        logger.error(f"Error generating context for chunk {chunk_index}: {str(e)}")
+        return f"This is chunk {chunk_index + 1} of {total_chunks} from the document."
+
+def create_contextualized_chunks(chunks: List, openai_client) -> List:
+    """Add contextual information to each chunk"""
+    # Get full document text
+    full_document = "\n\n".join([chunk.page_content for chunk in chunks])
+    total_chunks = len(chunks)
+    
+    contextualized_chunks = []
+    
+    for i, chunk in enumerate(chunks):
+        logger.info(f"Generating context for chunk {i + 1}/{total_chunks}")
+        
+        # Generate context for this chunk
+        context = generate_chunk_context(full_document, chunk.page_content, i, total_chunks, openai_client)
+        
+        # Prepend context to chunk
+        contextualized_content = f"{context}\n\n{chunk.page_content}"
+        
+        # Store both contextualized and original content
+        chunk.metadata['original_content'] = chunk.page_content
+        chunk.metadata['context'] = context
+        chunk.page_content = contextualized_content
+        
+        contextualized_chunks.append(chunk)
+    
+    return contextualized_chunks
 
 def load_document(file) -> List[str]:
     """Load and chunk document based on file type"""
@@ -135,31 +275,43 @@ def generate_embeddings(text: str, openai_client) -> List[float]:
     return response.data[0].embedding
 
 def store_in_pinecone(chunks: List, index, openai_client, filename: str):
-    """Store document chunks in Pinecone"""
+    """Store document chunks in Pinecone with contextual enhancement"""
     start_time = time.time()
     logger.info(f"Starting to store {len(chunks)} chunks in Pinecone for {filename}")
+    
+    # Create contextualized chunks
+    logger.info("Generating contextual information for chunks...")
+    context_start = time.time()
+    contextualized_chunks = create_contextualized_chunks(chunks, openai_client)
+    context_time = time.time() - context_start
+    logger.info(f"Context generation completed in {context_time:.2f}s")
     
     # Prepare vectors for upsert
     vectors = []
     embedding_times = []
+    chunk_ids = []
     
-    for i, chunk in enumerate(chunks):
+    for i, chunk in enumerate(contextualized_chunks):
         # Generate unique ID
         chunk_id = f"{filename}_{i}_{uuid.uuid4().hex[:8]}"
+        chunk_ids.append(chunk_id)
         
-        # Generate embedding
+        # Generate embedding on contextualized content
         embed_start = time.time()
         embedding = generate_embeddings(chunk.page_content, openai_client)
         embed_time = time.time() - embed_start
         embedding_times.append(embed_time)
         
-        # Prepare metadata
+        # Enhanced metadata
         metadata = {
-            "content": chunk.page_content,
+            "content": chunk.page_content,  # Contextualized content
+            "original_content": chunk.metadata['original_content'],  # Original chunk
+            "context": chunk.metadata['context'],  # Context description
             "filename": filename,
             "chunk_index": i,
             "total_chunks": len(chunks),
-            "chunk_size": len(chunk.page_content)
+            "chunk_size": len(chunk.metadata['original_content']),
+            "chunk_id": chunk_id
         }
         
         vectors.append({
@@ -170,6 +322,15 @@ def store_in_pinecone(chunks: List, index, openai_client, filename: str):
         
         if (i + 1) % 5 == 0:
             logger.info(f"Processed {i + 1}/{len(chunks)} chunks...")
+    
+    # Add to BM25 index
+    logger.info("Adding documents to BM25 index...")
+    bm25_start = time.time()
+    global bm25_index
+    bm25_index.add_documents(contextualized_chunks, chunk_ids)
+    bm25_index.save('bm25_index.pkl')
+    bm25_time = time.time() - bm25_start
+    logger.info(f"BM25 indexing completed in {bm25_time:.2f}s")
     
     # Log embedding generation stats
     total_embed_time = sum(embedding_times)
@@ -193,7 +354,7 @@ def store_in_pinecone(chunks: List, index, openai_client, filename: str):
     total_time = time.time() - start_time
     
     logger.info(f"Storage complete! Total vectors: {total_upserted}")
-    logger.info(f"Time breakdown - Embeddings: {total_embed_time:.2f}s, Upsert: {upsert_time:.2f}s, Total: {total_time:.2f}s")
+    logger.info(f"Time breakdown - Context: {context_time:.2f}s, Embeddings: {total_embed_time:.2f}s, BM25: {bm25_time:.2f}s, Upsert: {upsert_time:.2f}s, Total: {total_time:.2f}s")
 
 def semantic_search(query: str, index, openai_client, top_k: int = 5) -> List[Dict[str, Any]]:
     """Perform semantic search in Pinecone"""
@@ -229,6 +390,137 @@ def semantic_search(query: str, index, openai_client, top_k: int = 5) -> List[Di
     logger.info(f"Total search time: {total_time:.3f}s (embedding: {embed_time:.3f}s, search: {search_time:.3f}s)")
     
     return results.matches
+
+def hybrid_search(query: str, index, openai_client, top_k: int = 20) -> List[Dict[str, Any]]:
+    """Perform hybrid search combining semantic and BM25"""
+    start_time = time.time()
+    logger.info(f"Starting hybrid search for query: '{query}' (top_k={top_k})")
+    
+    # Semantic search
+    semantic_start = time.time()
+    semantic_results = semantic_search(query, index, openai_client, top_k=top_k)
+    semantic_time = time.time() - semantic_start
+    logger.info(f"Semantic search completed in {semantic_time:.3f}s, found {len(semantic_results)} results")
+    
+    # BM25 search
+    bm25_start = time.time()
+    global bm25_index
+    bm25_results = bm25_index.search(query, top_k=top_k)
+    bm25_time = time.time() - bm25_start
+    logger.info(f"BM25 search completed in {bm25_time:.3f}s, found {len(bm25_results)} results")
+    
+    # Reciprocal Rank Fusion
+    fusion_start = time.time()
+    fused_scores = {}
+    k = 60  # Constant for RRF
+    
+    # Add semantic results
+    for i, result in enumerate(semantic_results):
+        doc_id = result.id
+        if doc_id not in fused_scores:
+            fused_scores[doc_id] = {
+                'score': 0,
+                'result': result,
+                'sources': []
+            }
+        fused_scores[doc_id]['score'] += 1 / (k + i + 1)
+        fused_scores[doc_id]['sources'].append(f'semantic_rank_{i+1}')
+    
+    # Add BM25 results
+    for i, result in enumerate(bm25_results):
+        doc_id = result['chunk_id']
+        if doc_id not in fused_scores:
+            # Need to fetch from Pinecone if not in semantic results
+            fetch_result = index.fetch([doc_id])
+            if doc_id in fetch_result.vectors:
+                vector_data = fetch_result.vectors[doc_id]
+                # Create a result object similar to semantic search results
+                class BM25Result:
+                    def __init__(self, id, metadata, score):
+                        self.id = id
+                        self.metadata = metadata
+                        self.score = score
+                
+                fused_scores[doc_id] = {
+                    'score': 0,
+                    'result': BM25Result(doc_id, vector_data.metadata, result['score']),
+                    'sources': []
+                }
+        
+        if doc_id in fused_scores:
+            fused_scores[doc_id]['score'] += 1 / (k + i + 1)
+            fused_scores[doc_id]['sources'].append(f'bm25_rank_{i+1}')
+    
+    # Sort by fused score
+    sorted_results = sorted(fused_scores.items(), key=lambda x: x[1]['score'], reverse=True)[:top_k]
+    
+    # Extract results
+    final_results = []
+    for doc_id, data in sorted_results:
+        result = data['result']
+        # Add fusion information to metadata
+        result.metadata['fusion_score'] = data['score']
+        result.metadata['retrieval_sources'] = data['sources']
+        final_results.append(result)
+    
+    fusion_time = time.time() - fusion_start
+    total_time = time.time() - start_time
+    
+    logger.info(f"Rank fusion completed in {fusion_time:.3f}s")
+    logger.info(f"Total hybrid search time: {total_time:.3f}s")
+    logger.info(f"Final results: {len(final_results)} documents")
+    
+    return final_results
+
+def rerank_results(query: str, results: List, openai_client, top_k: int = 10) -> List:
+    """Rerank results using cross-encoder approach"""
+    start_time = time.time()
+    logger.info(f"Starting reranking of {len(results)} results")
+    
+    reranked = []
+    
+    for i, result in enumerate(results):
+        # Get original content for reranking
+        content = result.metadata.get('original_content', result.metadata.get('content', ''))
+        
+        # Score each chunk's relevance to the query
+        prompt = f"""On a scale of 0-10, rate how relevant this text is to answering the query.
+Query: {query}
+Text: {content[:1000]}...
+Only respond with a number 0-10."""
+        
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=10
+            )
+            
+            score = float(response.choices[0].message.content.strip())
+            reranked.append((score, result))
+            
+            if (i + 1) % 5 == 0:
+                logger.info(f"Reranked {i + 1}/{len(results)} documents...")
+                
+        except Exception as e:
+            logger.error(f"Error reranking result {i}: {str(e)}")
+            reranked.append((0, result))
+    
+    # Sort by relevance score
+    reranked.sort(key=lambda x: x[0], reverse=True)
+    
+    # Get top-k results
+    final_results = [r[1] for r in reranked[:top_k]]
+    
+    total_time = time.time() - start_time
+    logger.info(f"Reranking completed in {total_time:.3f}s")
+    
+    # Log reranking scores
+    for i, (score, result) in enumerate(reranked[:top_k]):
+        logger.info(f"Reranked {i+1}: Score={score:.1f}, File={result.metadata.get('filename', 'Unknown')}")
+    
+    return final_results
 
 def generate_response(query: str, context: List[Dict[str, Any]], openai_client) -> str:
     """Generate response using OpenAI with retrieved context"""
@@ -355,12 +647,15 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Searching and generating response..."):
                 try:
-                    # Perform semantic search
-                    search_results = semantic_search(prompt, index, openai_client)
+                    # Perform hybrid search
+                    search_results = hybrid_search(prompt, index, openai_client)
                     
                     if search_results:
+                        # Rerank results
+                        reranked_results = rerank_results(prompt, search_results, openai_client)
+                        
                         # Generate response with context
-                        response = generate_response(prompt, search_results, openai_client)
+                        response = generate_response(prompt, reranked_results, openai_client)
                         st.markdown(response)
                         
                         # Show sources in expander

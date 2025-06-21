@@ -13,7 +13,7 @@ docx2txt>=0.8
 
 # Contextual RAG dependencies
 rank-bm25>=0.2.2
-nltk>=3.8
+nltk>=3.8,<4.0
 
 # Optional: For better performance with Pinecone
 # pinecone[grpc]>=3.0.0 

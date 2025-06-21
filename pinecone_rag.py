@@ -17,16 +17,28 @@ import logging
 import time
 from datetime import datetime
 from rank_bm25 import BM25Okapi
-import nltk
-from nltk.tokenize import word_tokenize
 import json
 import pickle
 
+# Setup NLTK data directory for Render deployment
+import nltk
+nltk_data_dir = os.path.join(os.path.dirname(__file__), 'nltk_data')
+os.makedirs(nltk_data_dir, exist_ok=True)
+nltk.data.path.append(nltk_data_dir)
+
+# Import after setting NLTK path
+from nltk.tokenize import word_tokenize
+
 # Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
+for resource in ['punkt', 'punkt_tab']:
+    try:
+        nltk.data.find(f'tokenizers/{resource}')
+    except LookupError:
+        try:
+            nltk.download(resource, download_dir=nltk_data_dir)
+        except:
+            # Resource might not exist in this NLTK version
+            pass
 
 # Configure logging with more detail
 logging.basicConfig(
@@ -52,7 +64,11 @@ class BM25Index:
         """Add documents to BM25 index"""
         for chunk, chunk_id in zip(chunks, chunk_ids):
             # Tokenize for BM25
-            tokens = word_tokenize(chunk.page_content.lower())
+            try:
+                tokens = word_tokenize(chunk.page_content.lower())
+            except:
+                # Fallback to simple split if NLTK tokenizer fails
+                tokens = chunk.page_content.lower().split()
             self.documents.append(tokens)
             self.metadata.append(chunk.metadata)
             self.chunk_ids.append(chunk_id)
@@ -65,7 +81,11 @@ class BM25Index:
         if not self.bm25:
             return []
             
-        query_tokens = word_tokenize(query.lower())
+        try:
+            query_tokens = word_tokenize(query.lower())
+        except:
+            # Fallback to simple split if NLTK tokenizer fails
+            query_tokens = query.lower().split()
         scores = self.bm25.get_scores(query_tokens)
         
         # Get top-k indices

@@ -78,4 +78,7 @@ node_modules/
 *.bak
 
 # BM25 index
-bm25_index.pkl 
+bm25_index.pkl
+
+# NLTK data
+nltk_data/ 
